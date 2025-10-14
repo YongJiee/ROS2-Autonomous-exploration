@@ -1,0 +1,13 @@
+Add this to your `.gitignore`:
+```
+__pycache__/
+*.pyc
+*.pyo
+build/
+install/
+log/
+*.egg-info/
+.vscode/
+.idea/
+*.bag
+*.db3
