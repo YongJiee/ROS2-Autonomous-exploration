@@ -3,90 +3,131 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import LaserScan
+from nav_msgs.msg import OccupancyGrid
 import numpy as np
 
-class TurtleBotExplorer(Node):
+class CostmapExplorer(Node):
     def __init__(self):
-        super().__init__('turtlebot_explorer')
+        super().__init__('costmap_explorer')
         
+        # Publishers and subscribers
         self.cmd_vel_pub = self.create_publisher(Twist, 'cmd_vel', 10)
         self.scan_sub = self.create_subscription(
             LaserScan, 'scan', self.scan_callback, 10)
+        self.costmap_sub = self.create_subscription(
+            OccupancyGrid, 'local_costmap/costmap', self.costmap_callback, 10)
         
-        self.linear_speed = 0.15
+        self.linear_speed = 0.12
         self.angular_speed = 0.5
-        self.safe_distance = 0.35
-        self.wall_follow_distance = 0.4
         
         self.scan_data = None
+        self.costmap = None
         self.timer = self.create_timer(0.1, self.explore)
         
-        self.get_logger().info('TurtleBot Explorer Started!')
+        self.get_logger().info('🗺️  Costmap Explorer Started!')
         
     def scan_callback(self, msg):
         self.scan_data = np.array(msg.ranges)
-        self.scan_data[np.isinf(self.scan_data)] = 10.0
+        self.scan_data = np.where(np.isinf(self.scan_data), msg.range_max, self.scan_data)
         
-    def get_sector_distance(self, start_deg, end_deg):
-        if self.scan_data is None:
-            return 10.0
+    def costmap_callback(self, msg):
+        """Receive and process costmap"""
+        self.costmap = msg
         
-        num_readings = len(self.scan_data)
-        start_idx = int((start_deg / 360.0) * num_readings) % num_readings
-        end_idx = int((end_deg / 360.0) * num_readings) % num_readings
+    def find_exit_from_costmap(self):
+        """Analyze costmap to find exits (large clear areas)"""
+        if self.costmap is None:
+            return None, 0.0
         
-        if start_idx < end_idx:
-            sector = self.scan_data[start_idx:end_idx]
-        else:
-            sector = np.concatenate([self.scan_data[start_idx:], 
-                                    self.scan_data[:end_idx]])
+        width = self.costmap.info.width
+        height = self.costmap.info.height
+        data = np.array(self.costmap.data).reshape((height, width))
         
-        return np.min(sector) if len(sector) > 0 else 10.0
+        # Find clear areas (value 0 = free space)
+        clear_mask = (data == 0)
+        
+        # Look for large continuous clear areas
+        # This is simplified - you'd want proper connected component analysis
+        
+        # For now, just find the direction with most clear cells
+        center_x = width // 2
+        center_y = height // 2
+        
+        # Check sectors around robot
+        sectors = {
+            'front': clear_mask[center_y-10:center_y, center_x-5:center_x+5],
+            'left': clear_mask[center_y-5:center_y+5, center_x+5:center_x+15],
+            'right': clear_mask[center_y-5:center_y+5, center_x-15:center_x-5],
+        }
+        
+        # Count clear cells in each direction
+        clear_counts = {k: np.sum(v) for k, v in sectors.items()}
+        
+        # Find best direction (most clear space)
+        best_direction = max(clear_counts, key=clear_counts.get)
+        clearance = clear_counts[best_direction]
+        
+        self.get_logger().info(f'🗺️  Clearance: {clear_counts}')
+        
+        return best_direction, clearance
         
     def explore(self):
+        """Explore using costmap analysis"""
         if self.scan_data is None:
             return
         
         twist = Twist()
         
-        front = self.get_sector_distance(-15, 15)
-        front_right = self.get_sector_distance(-60, -30)
-        right = self.get_sector_distance(-100, -80)
-        front_left = self.get_sector_distance(30, 60)
-        
-        if front < self.safe_distance:
-            twist.linear.x = 0.0
-            twist.angular.z = self.angular_speed
-            self.get_logger().info('Obstacle ahead - turning left')
+        # Try to use costmap if available
+        if self.costmap is not None:
+            direction, clearance = self.find_exit_from_costmap()
             
-        elif right > self.wall_follow_distance * 1.5:
-            twist.linear.x = self.linear_speed * 0.5
-            twist.angular.z = -self.angular_speed * 0.8
-            self.get_logger().info('Lost wall - turning right')
-            
-        elif right < self.wall_follow_distance * 0.7:
-            twist.linear.x = self.linear_speed * 0.7
-            twist.angular.z = self.angular_speed * 0.3
-            self.get_logger().info('Too close to wall - veering left')
-            
+            # If we found a large clear area (potential exit)
+            if clearance > 50:  # Threshold for "large" area
+                self.get_logger().info(f'🎯 Large opening detected: {direction}')
+                
+                if direction == 'front':
+                    twist.linear.x = 0.15
+                    twist.angular.z = 0.0
+                elif direction == 'left':
+                    twist.linear.x = 0.05
+                    twist.angular.z = 0.5
+                elif direction == 'right':
+                    twist.linear.x = 0.05
+                    twist.angular.z = -0.5
+            else:
+                # Use simple wall following
+                self.wall_follow(twist)
         else:
-            twist.linear.x = self.linear_speed
-            twist.angular.z = 0.0
-            self.get_logger().info(f'Following wall - F:{front:.2f} R:{right:.2f}')
+            # Fallback to LiDAR-only wall following
+            self.wall_follow(twist)
         
         self.cmd_vel_pub.publish(twist)
+    
+    def wall_follow(self, twist):
+        """Simple wall following logic"""
+        front = np.min(self.scan_data[len(self.scan_data)//3:2*len(self.scan_data)//3])
+        right = np.min(self.scan_data[:len(self.scan_data)//4])
+        
+        if front < 0.3:
+            twist.linear.x = 0.0
+            twist.angular.z = 0.5
+        elif right > 0.5:
+            twist.linear.x = 0.1
+            twist.angular.z = -0.4
+        else:
+            twist.linear.x = 0.12
+            twist.angular.z = 0.0
 
 def main(args=None):
     rclpy.init(args=args)
-    explorer = TurtleBotExplorer()
+    explorer = CostmapExplorer()
     
     try:
         rclpy.spin(explorer)
     except KeyboardInterrupt:
-        explorer.get_logger().info('Exploration stopped by user')
+        pass
     finally:
-        twist = Twist()
-        explorer.cmd_vel_pub.publish(twist)
         explorer.destroy_node()
         rclpy.shutdown()
 

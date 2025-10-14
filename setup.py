@@ -15,6 +15,9 @@ setup(
         # Include launch files
         (os.path.join('share', package_name, 'launch'), 
             glob('launch/*.launch.py')),
+        # Include config files
+        (os.path.join('share', package_name, 'config'),
+            glob('config/*.yaml')),
         # Include model files
         (os.path.join('share', package_name, 'models', 'Maze_01'),
             glob('models/Maze_01/*')),
