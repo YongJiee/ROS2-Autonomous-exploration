@@ -37,6 +37,7 @@ setup(
     entry_points={
         'console_scripts': [
             'explorer = maze_explorer.explorer_node:main',
+            'nav_goal_sender = maze_explorer.nav_goal_sender:main',
         ],
     },
 )
