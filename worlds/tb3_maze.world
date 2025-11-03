@@ -16,6 +16,19 @@
       <real_time_factor>1.0</real_time_factor>
     </physics>
 
+    <!-- ========================================== -->
+    <!-- CRITICAL: Add ROS 2 Plugins -->
+    <!-- ========================================== -->
+    <plugin name="gazebo_ros_state" filename="libgazebo_ros_state.so">
+      <ros>
+        <namespace>/gazebo</namespace>
+      </ros>
+      <update_rate>10.0</update_rate>
+    </plugin>
+
+    <plugin name="gazebo_ros_factory" filename="libgazebo_ros_factory.so"/>
+    <!-- ========================================== -->
+
     <!-- Your maze model (inlined) -->
     <model name="mb3_maze">
       <!-- Put the whole maze at the origin; change this pose if you want to offset it -->
@@ -485,4 +498,3 @@
 
   </world>
 </sdf>
-

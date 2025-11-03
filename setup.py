@@ -21,6 +21,9 @@ setup(
         # Include rviz files
         (os.path.join('share', package_name, 'rviz'),
             glob('rviz/*.rviz')),
+        # Include world files
+        (os.path.join('share', package_name, 'worlds'),
+            glob('worlds/*.world')),
         # Include model files
         (os.path.join('share', package_name, 'models', 'Maze_01'),
             glob('models/Maze_01/*')),

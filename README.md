@@ -2,6 +2,8 @@
 export GAZEBO_MODEL_PATH=$GAZEBO_MODEL_PATH:/home/yongjie/ros2_assign_ws/install/maze_explorer/share/maze_explorer/models
 ros2 launch turtlebot3_gazebo empty_world.launch.py
 
+# Spawn World
+ros2 launch maze_explorer maze_world.launch.py world_name:=tb3_maze.world x_pose:=0.0  y_pose:=-0.3
 
 # ============ TERMINAL 2 ============ (new terminal)
 export GAZEBO_MODEL_PATH=$GAZEBO_MODEL_PATH:/home/yongjie/ros2_assign_ws/install/maze_explorer/share/maze_explorer/models
