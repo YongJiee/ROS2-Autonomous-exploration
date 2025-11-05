@@ -187,7 +187,7 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 15.0 #updated adjusted 10.
-        inflation_radius: 0.18 #updated adjusted .10
+        inflation_radius: 0.13 #updated adjusted .18
       voxel_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"
         enabled: True
@@ -255,8 +255,8 @@ global_costmap:
 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        inflation_radius: 0.18 #change adjusted 0.12
-        cost_scaling_factor: 15.0 #change adjusted 15.0
+        inflation_radius: 0.16 #change adjusted 0.18
+        cost_scaling_factor: 13.0 #change adjusted 15.0
 
       always_send_full_costmap: True
 
