@@ -3,7 +3,8 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription
+from launch.actions import IncludeLaunchDescription, TimerAction, RegisterEventHandler
+from launch.event_handlers import OnProcessStart
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 
@@ -19,7 +20,7 @@ def generate_launch_description():
     x_pose = LaunchConfiguration('x_pose', default='0.0')
     y_pose = LaunchConfiguration('y_pose', default='0.0')
 
-    # World file path - using PathJoinSubstitution
+    # World file path
     world = PathJoinSubstitution([
         maze_explorer_dir,
         'worlds',
@@ -49,7 +50,7 @@ def generate_launch_description():
         launch_arguments={'use_sim_time': use_sim_time}.items()
     )
 
-    # Spawn robot using TurtleBot3's own launch file
+    # Spawn robot - DELAYED to wait for Gazebo
     spawn_turtlebot_cmd = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(turtlebot3_gazebo_dir, 'launch', 'spawn_turtlebot3.launch.py')
@@ -60,13 +61,19 @@ def generate_launch_description():
         }.items()
     )
 
+    # Add 8-second delay before spawning robot
+    delayed_spawn = TimerAction(
+        period=8.0,  # Wait 8 seconds for Gazebo to fully start
+        actions=[spawn_turtlebot_cmd]
+    )
+
     # Create launch description
     ld = LaunchDescription()
 
-    # Add actions
+    # Add actions in order
     ld.add_action(gzserver_cmd)
     ld.add_action(gzclient_cmd)
     ld.add_action(robot_state_publisher_cmd)
-    ld.add_action(spawn_turtlebot_cmd)
+    ld.add_action(delayed_spawn)  # Use delayed version
 
     return ld

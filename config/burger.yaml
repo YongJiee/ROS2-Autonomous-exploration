@@ -157,7 +157,7 @@ controller_server:
       short_circuit_trajectory_evaluation: False  #original True
       stateful: True
       critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
-      BaseObstacle.scale: 1.0 #0.02
+      BaseObstacle.scale: 0.8 #0.02
       PathAlign.scale: 32.0
       PathAlign.forward_point_distance: 0.05   # was 0.1
       GoalAlign.scale: 24.0
@@ -181,13 +181,13 @@ local_costmap:
       width: 20  #must be integer
       height: 20  #must be integer
       resolution: 0.05
-      robot_radius: 0.12  #adjusted
+      robot_radius: 0.10  #adjusted
       track_unknown_space: true
       plugins: ["voxel_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 15.0 #updated adjusted 10.
-        inflation_radius: 0.13 #updated adjusted .18
+        cost_scaling_factor: 10.0 #updated adjusted 10.
+        inflation_radius: 0.14 #updated adjusted .10
       voxel_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"
         enabled: True
@@ -219,7 +219,7 @@ global_costmap:
       transform_tolerance: 0.5             # <-- gives TF a little slack
       use_sim_time: True
       resolution: 0.05 #change
-      robot_radius: 0.11  #added
+      robot_radius: 0.10  #added
 
       # Exploration-friendly window that always contains the robot
       rolling_window: true
@@ -255,8 +255,8 @@ global_costmap:
 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        inflation_radius: 0.16 #change adjusted 0.18
-        cost_scaling_factor: 13.0 #change adjusted 15.0
+        inflation_radius: 0.14 #change adjusted 0.12
+        cost_scaling_factor: 10.0 #change adjusted 15.0
 
       always_send_full_costmap: True
 

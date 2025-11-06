@@ -87,8 +87,8 @@ def main(args=None):
     
     # Send goal
     goal_sender.send_goal(
-        x=0.0,
-        y=5.0,
+        x=5.0,
+        y=0.0,
         z=0.0,
         orientation_z=0.0,
         orientation_w=1.0
