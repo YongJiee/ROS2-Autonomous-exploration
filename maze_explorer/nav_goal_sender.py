@@ -55,7 +55,7 @@ class OpportunisticNavigator(Node):
         self.initial_goal_y = 0.0
         
         # INF detection parameters
-        self.inf_detection_time = 2.0  # Must see INF for 2 seconds
+        self.inf_detection_time = 5.0  # Must see INF for 2 seconds
         self.inf_first_seen = None
         self.inf_direction_detected = None
         
@@ -168,7 +168,7 @@ class OpportunisticNavigator(Node):
             )
             
             # If majority of front is INF, trigger exit detection
-            if front_inf_percentage > 80:  # 80% of front is clear
+            if front_inf_percentage > 95:  # 80% of front is clear
                 if self.exit_first_seen is None:
                     self.exit_first_seen = current_time
                     self.get_logger().info(f'🚪 EXIT DETECTED! Front is {front_inf_percentage:.1f}% clear!')
