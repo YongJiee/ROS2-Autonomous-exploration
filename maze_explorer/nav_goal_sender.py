@@ -10,460 +10,399 @@ from rclpy.action import ActionClient
 from action_msgs.msg import GoalStatus
 import math
 import numpy as np
+import time
 
-class OpportunisticNavigator(Node):
+class Exploration_Node(Node):
     def __init__(self):
-        super().__init__('opportunistic_navigator')
+        super().__init__('Exploration_Node')
         
-        # Subscribers
-        self.scan_sub = self.create_subscription(
-            LaserScan,
-            '/scan',
-            self.scan_callback,
-            10
-        )
+        self.create_subscription(LaserScan, '/scan', self.lidar_callback, 10)    #To Subscribe to Lidar
+        self.create_subscription(Odometry, '/odom', self.odom_pos_callback, 10) #To Subscrive to odom(Current Pos)
+        self.cmd_vel = self.create_publisher(Twist, '/cmd_vel', 10)             #To publish to robot movement
+        self.goal_pub = self.create_publisher(PoseStamped, '/goal_pose', 10)    #To Publish goal/Set Goal
+        self.nav_client = ActionClient(self, NavigateToPose, 'navigate_to_pose') #To tell Nav2 to sent goal/go there
         
-        self.odom_sub = self.create_subscription(
-            Odometry,
-            '/odom',
-            self.odom_callback,
-            10
-        )
+        #Robot inital value
+        self.x = self.y = self.yaw = 0.0
+        self.odom_ready = False
         
-        # Publisher for velocity commands
-        self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        #Navigation Value
+        self.initial_goal = (5.0, 0.0)      #Set Custom goal
+        self.goal_distance = 2.5            #Set goal 2.5m from robot pos
+        self.timeout = 30.0                 #Set timeout for recovery behaviour
+        self.inf_time = 2.0                 #Check how long inf val see
+        self.exit_time = 5.0                #Check how long the robot is out of maze
+        self.max_fails = 3                  #Set max number of time before recovery trigger
+        self.recovery_cooldown = 10.0       #Each interval of recovery trigger
         
-        # Publisher for 2D Nav Goal
-        self.goal_pub = self.create_publisher(PoseStamped, '/goal_pose', 10)
+        #Tracking flag
+        self.nav_start = None
+        self.inf_start = None
+        self.exit_start = None
+        self.last_goal = None
+        self.goal_handle = None
+        self.last_recovery = None
+        self.fails = 0
         
-        # Action client for navigation
-        self.nav_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
-        
-        # Robot state
-        self.current_x = 0.0
-        self.current_y = 0.0
-        self.current_yaw = 0.0
-        self.odom_received = False
-        
-        # Control parameters
-        self.rotation_speed = 0.5        
-        self.angle_tolerance = 0.05
-        self.goal_distance = 2.5
-        
-        # Initial goal (you can change this)
-        self.initial_goal_x = 5.0
-        self.initial_goal_y = 0.0
-        
-        # INF detection parameters
-        self.inf_detection_time = 5.0  # Must see INF for 2 seconds
-        self.inf_first_seen = None
-        self.inf_direction_detected = None
-        
-        # Exit detection parameters (270° to 90° = entire front)
-        self.exit_sector_start = 270  # Right side
-        self.exit_sector_end = 90     # Left side (wraps through 0°)
-        self.exit_detection_time = 2.0  # Must see exit for 2 seconds
-        self.exit_first_seen = None
-        
-        # State
-        self.target_angle = None
-        self.is_rotating = False
-        self.is_navigating = False
-        self.initial_goal_sent = False
+        #Track robot status
+        self.done = False
+        self.rotating = False
+        self.navigating = False
         self.inf_triggered = False
-        self.maze_complete = False
-        self.current_goal_handle = None
+        self.in_timeout = False
+        self.in_recovery = False
         
-        # Timer for control loop
-        self.timer = self.create_timer(0.1, self.control_loop)
+        #Check for rotation and time out
+        self.create_timer(0.1, self.rotation_loop)
+        self.create_timer(1.0, self.stuck_timeout)
         
-        self.get_logger().info('='*60)
-        self.get_logger().info('Opportunistic Navigator Started!')
-        self.get_logger().info(f'Initial goal: ({self.initial_goal_x}, {self.initial_goal_y})')
-        self.get_logger().info(f'Will switch to INF if detected for {self.inf_detection_time}s')
-        self.get_logger().info(f'Exit detection: INF from {self.exit_sector_start}° to {self.exit_sector_end}° (front hemisphere)')
-        self.get_logger().info('='*60)
+        self.get_logger().info('Exploration Start')
     
-    def odom_callback(self, msg):
-        """Get current robot pose from odometry"""
-        self.current_x = msg.pose.pose.position.x
-        self.current_y = msg.pose.pose.position.y
-        
-        orientation_q = msg.pose.pose.orientation
-        siny_cosp = 2 * (orientation_q.w * orientation_q.z + orientation_q.x * orientation_q.y)
-        cosy_cosp = 1 - 2 * (orientation_q.y * orientation_q.y + orientation_q.z * orientation_q.z)
-        self.current_yaw = math.atan2(siny_cosp, cosy_cosp)
-        
-        if not self.odom_received:
-            self.get_logger().info(f'✓ Odometry received!')
-            self.odom_received = True
-            
-            # Send initial goal after getting odometry
-            self.send_initial_goal()
+    def stop_movement(self): #Stop robot movement                  
+        self.cmd_vel.publish(Twist())
     
-    def send_initial_goal(self):
-        """Send the initial navigation goal"""
-        if self.initial_goal_sent:
+    def angle_range(self, angle): #Check angle from -270 to 190
+        return math.atan2(math.sin(angle), math.cos(angle))
+    
+    def extract_sensor_data(self, msg, angle_min, angle_max): #retrive value from Lidar and divide into 4 parts
+        ranges = []
+        for i, r in enumerate(msg.ranges):
+            if math.isinf(r) or math.isnan(r):
+                continue
+            angle = (math.degrees(msg.angle_min + i*msg.angle_increment) % 360)
+            if angle_min > angle_max:
+                if angle >= angle_min or angle <= angle_max:
+                    ranges.append(r)
+            else:
+                if angle_min <= angle <= angle_max:
+                    ranges.append(r)
+        return ranges
+
+    def odom_pos_callback(self, msg): #Get robot position reference from odom, X,y and yaw
+        if self.done:
+            self.stop_movement()
             return
         
-        self.get_logger().info('━'*60)
-        self.get_logger().info('🎯 SENDING INITIAL GOAL')
-        self.get_logger().info(f'   Goal: ({self.initial_goal_x}, {self.initial_goal_y})')
-        self.get_logger().info('━'*60)
+        self.x, self.y = msg.pose.pose.position.x, msg.pose.pose.position.y
+        q = msg.pose.pose.orientation
+        self.yaw = math.atan2(2*(q.w*q.z + q.x*q.y), 1-2*(q.y*q.y + q.z*q.z))
         
-        self.send_nav_goal(self.initial_goal_x, self.initial_goal_y, 0.0)
-        self.initial_goal_sent = True
+        if not self.odom_ready:
+            self.odom_ready = True
+            self.send_goal(*self.initial_goal, 0.0)
     
-    def is_in_front_hemisphere(self, angle_deg):
-        """Check if angle is in front hemisphere (270° to 90° wrapping through 0°)"""
-        angle_deg = angle_deg % 360
-        
-        # From 270° to 360° OR from 0° to 90°
-        return angle_deg >= self.exit_sector_start or angle_deg <= self.exit_sector_end
-    
-    def scan_callback(self, msg):
-        """Monitor laser scan for INF detection and exit detection"""
-        
-        if not self.odom_received or self.maze_complete:
+    def lidar_callback(self, msg): #logic for exit detection and exit maze
+
+        if self.done:       #Robot out of maze, stop robot
+            self.stop_movement()
             return
         
-        ranges = np.array(msg.ranges)
-        inf_indices = np.where(np.isinf(ranges))[0]
-        
-        if len(inf_indices) == 0:
-            # No INF - reset all timers
-            if self.inf_first_seen is not None or self.exit_first_seen is not None:
-                self.get_logger().info('INF lost, resetting timers')
-            self.inf_first_seen = None
-            self.inf_direction_detected = None
-            self.exit_first_seen = None
+        if not self.odom_ready or self.in_recovery: #dont do anything unless know its pos
             return
         
-        # Check for EXIT condition (INF in entire front hemisphere)
-        exit_inf_indices = []
-        for idx in inf_indices:
-            angle = msg.angle_min + (idx * msg.angle_increment)
-            angle_deg = math.degrees(angle) % 360
-            if self.is_in_front_hemisphere(angle_deg):
-                exit_inf_indices.append(idx)
+        inf_idx = np.where(np.isinf(msg.ranges))[0] #check lidar val got inf
+        if len(inf_idx) == 0:                       #no inf detected
+            self.inf_start = self.exit_start = None
+            return
         
-        current_time = self.get_clock().now()
+       #check whether robot out of maze from 270 to 90
+        front_inf = sum(1 for i in inf_idx if 
+                       (a := math.degrees(msg.angle_min + i*msg.angle_increment)%360) >= 270 or a <= 90)
+        total_front = sum(1 for i in range(len(msg.ranges)) if 
+                         (a := math.degrees(msg.angle_min + i*msg.angle_increment)%360) >= 270 or a <= 90)
+        front_pct = (front_inf/total_front)*100 if total_front > 0 else 0
         
-        # Check if ALL front hemisphere has INF (robot is out of maze)
-        if len(exit_inf_indices) > 0:
-            # Count how many beams are in front hemisphere
-            total_front_beams = 0
-            for i in range(len(ranges)):
-                angle = msg.angle_min + (i * msg.angle_increment)
-                angle_deg = math.degrees(angle) % 360
-                if self.is_in_front_hemisphere(angle_deg):
-                    total_front_beams += 1
-            
-            # Calculate percentage of front that is INF
-            front_inf_percentage = (len(exit_inf_indices) / total_front_beams) * 100
-            
-            self.get_logger().info(
-                f'🚪 Front INF: {len(exit_inf_indices)}/{total_front_beams} beams ({front_inf_percentage:.1f}%)',
-                throttle_duration_sec=0.5
-            )
-            
-            # If majority of front is INF, trigger exit detection
-            if front_inf_percentage > 95:  # 80% of front is clear
-                if self.exit_first_seen is None:
-                    self.exit_first_seen = current_time
-                    self.get_logger().info(f'🚪 EXIT DETECTED! Front is {front_inf_percentage:.1f}% clear!')
-                    self.get_logger().info(f'   Starting exit timer...')
-                    return
-                
-                # Check how long we've seen exit
-                exit_elapsed = (current_time - self.exit_first_seen).nanoseconds / 1e9
-                
-                if exit_elapsed < self.exit_detection_time:
-                    self.get_logger().info(
-                        f'🚪 EXIT stable for {exit_elapsed:.1f}s / {self.exit_detection_time}s',
-                        throttle_duration_sec=0.5
-                    )
-                    return
-                
-                # EXIT DETECTED FOR LONG ENOUGH!
-                self.trigger_maze_complete()
+        if front_pct > 80:
+            if self.exit_start is None:
+                self.exit_start = self.get_clock().now()
+            elif (self.get_clock().now() - self.exit_start).nanoseconds/1e9 >= self.exit_time:
+                self.maze_complete()
                 return
-            else:
-                # Not enough front clearance
-                if self.exit_first_seen is not None:
-                    self.get_logger().info('Exit condition lost (not enough front clearance)')
-                self.exit_first_seen = None
         else:
-            # No front INF
-            if self.exit_first_seen is not None:
-                self.get_logger().info('Exit INF lost')
-            self.exit_first_seen = None
+            self.exit_start = None
         
-        # Don't process general INF if already triggered or rotating
-        if self.inf_triggered or self.is_rotating:
+        #Check exit is found
+        if self.rotating or self.inf_triggered:
             return
         
-        # General INF detection (for opportunistic navigation)
-        inf_idx = inf_indices[len(inf_indices)//2]
-        laser_angle = msg.angle_min + (inf_idx * msg.angle_increment)
-        laser_angle_deg = math.degrees(laser_angle) % 360
+        angle = msg.angle_min + inf_idx[len(inf_idx)//2]*msg.angle_increment
         
-        if self.inf_first_seen is None:
-            # First time seeing INF
-            self.inf_first_seen = current_time
-            self.inf_direction_detected = laser_angle
-            self.get_logger().info(f'⏱️ INF detected at {laser_angle_deg:.1f}°, starting timer...')
-            return
-        
-        # Check how long we've been seeing INF
-        elapsed = (current_time - self.inf_first_seen).nanoseconds / 1e9
-        
-        if elapsed < self.inf_detection_time:
-            # Still counting
-            self.get_logger().info(
-                f'⏱️ INF stable for {elapsed:.1f}s / {self.inf_detection_time}s',
-                throttle_duration_sec=0.5
-            )
-            return
-        
-        # INF detected for long enough! Trigger!
-        self.get_logger().info('━'*60)
-        self.get_logger().info('🚨 INF DETECTED FOR REQUIRED TIME!')
-        self.get_logger().info(f'   Found {len(inf_indices)} INF beams')
-        self.get_logger().info(f'   Direction: {laser_angle_deg:.1f}°')
-        self.get_logger().info('   Canceling current goal...')
-        
-        # Cancel current navigation
-        if self.is_navigating and self.current_goal_handle is not None:
-            self.get_logger().info('   Sending cancel request to Nav2...')
-            cancel_future = self.current_goal_handle.cancel_goal_async()
-            cancel_future.add_done_callback(self.cancel_done_callback)
-        
-        # Mark as triggered
-        self.inf_triggered = True
-        
-        # Start rotation to face INF
-        angle_diff = self.normalize_angle(self.inf_direction_detected)
-        
-        if abs(angle_diff) < self.angle_tolerance:
-            self.get_logger().info('   Already facing INF, sending goal...')
-            self.send_nav_goal_to_inf(0.0)
-            return
-        
-        target_global_angle = self.current_yaw + self.inf_direction_detected
-        target_global_angle = self.normalize_angle(target_global_angle)
-        
-        self.get_logger().info(f'   Rotating {math.degrees(angle_diff):.1f}° to face INF')
-        self.get_logger().info('━'*60)
-        
-        self.target_angle = target_global_angle
-        self.is_rotating = True
-    
-    def trigger_maze_complete(self):
-        """Exit detected - maze complete!"""
-        self.get_logger().info('━'*60)
-        self.get_logger().info('━'*60)
-        self.get_logger().info('🎉🎉🎉 ROBOT OUT OF MAZE! 🎉🎉🎉')
-        self.get_logger().info('   Front hemisphere is clear (270° to 90°)')
-        self.get_logger().info('   Canceling navigation...')
-        
-        # Cancel current navigation
-        if self.is_navigating and self.current_goal_handle is not None:
-            cancel_future = self.current_goal_handle.cancel_goal_async()
-            cancel_future.add_done_callback(self.cancel_done_callback)
-        
-        # Stop robot
-        twist = Twist()
-        self.cmd_vel_pub.publish(twist)
-        
-        # Mark maze complete
-        self.maze_complete = True
-        
-        self.get_logger().info('')
-        self.get_logger().info('🏁 MAZE COMPLETE - MISSION SUCCESS! 🏁')
-        self.get_logger().info(f'   Final position: ({self.current_x:.2f}, {self.current_y:.2f})')
-        self.get_logger().info('')
-        self.get_logger().info('━'*60)
-        self.get_logger().info('━'*60)
-    
-    def cancel_done_callback(self, future):
-        """Handle goal cancellation"""
-        try:
-            cancel_response = future.result()
-            if cancel_response.goals_canceling:
-                self.get_logger().info('✅ Goal cancellation accepted')
-            else:
-                self.get_logger().warn('⚠️ Goal cancellation not accepted')
-        except Exception as e:
-            self.get_logger().error(f'❌ Cancel error: {e}')
-    
-    def normalize_angle(self, angle):
-        """Normalize angle to [-pi, pi]"""
-        while angle > math.pi:
-            angle -= 2 * math.pi
-        while angle < -math.pi:
-            angle += 2 * math.pi
-        return angle
-    
-    def control_loop(self):
-        """Control loop to rotate robot to target angle"""
-        
-        if self.maze_complete:
-            return
-        
-        if not self.is_rotating or self.target_angle is None:
-            return
-        
-        angle_diff = self.normalize_angle(self.target_angle - self.current_yaw)
-        
-        if abs(angle_diff) < self.angle_tolerance:
-            self.get_logger().info('✅ ROTATION COMPLETE!')
+        if self.inf_start is None:
+            self.inf_start = self.get_clock().now()
+        elif (self.get_clock().now() - self.inf_start).nanoseconds/1e9 >= self.inf_time:
+            if self.goal_handle:
+                self.goal_handle.cancel_goal_async()
             
+            self.inf_triggered = True
+            diff = self.angle_range(angle)
+            
+            if abs(diff) < 0.05:
+                self.send_goal_location(angle)
+            else:
+                self.rotating = True
+                self.target_yaw = self.angle_range(self.yaw + angle)
+    
+    #Robot out of mze
+    def maze_complete(self):
+        self.get_logger().info('Robot out of maze')
+        
+        self.done = True    #Set flag to done
+        
+        #cancel navigation
+        if self.goal_handle:
+            try:
+                self.goal_handle.cancel_goal_async()
+            except:
+                pass
+        
+        #reset Flag
+        self.navigating = False
+        self.rotating = False
+        self.inf_triggered = False
+        self.in_recovery = False
+        
+       #Stop robot multiple times
+        for _ in range(10):
+            self.stop_movement()
+            time.sleep(0.1)
+    
+    #Timeout if robot in same position too long
+    def stuck_timeout(self):
+        if self.done:
+            self.stop_movement()
+            return
+        
+        if not self.navigating or not self.nav_start:
+            return
+        
+        if (self.get_clock().now() - self.nav_start).nanoseconds/1e9 > self.timeout:
+            self.in_timeout = True
+            if self.goal_handle:
+                self.goal_handle.cancel_goal_async()
+            self.navigating = False
+            self.send_goal_location(0.0)
+    
+    #Recovery rotate in place
+    def rotation_loop(self):
+        if self.done:
+            self.stop_movement()
+            return
+        
+        if not self.rotating or not hasattr(self, 'target_yaw'):
+            return
+        
+        diff = self.angle_range(self.target_yaw - self.yaw)
+        
+        if abs(diff) < 0.05:
+            self.stop_movement()
+            self.rotating = False
+            self.send_goal_location(0.0)
+        else:
             twist = Twist()
-            self.cmd_vel_pub.publish(twist)
-            self.is_rotating = False
-            self.target_angle = None
-            
-            # Send goal toward INF
-            self.send_nav_goal_to_inf(0.0)
+            twist.angular.z = (0.5 if diff > 0 else -0.5) * (0.5 if abs(diff) < 0.2 else 1.0)
+            self.cmd_vel.publish(twist)
+    
+   #Send goal in rviz
+    def send_goal_location(self, angle):
+        #Dont sent goal if complete
+        if self.done:
             return
         
-        twist = Twist()
-        
-        if angle_diff > 0:
-            twist.angular.z = self.rotation_speed
-            direction = "⬅️"
-        else:
-            twist.angular.z = -self.rotation_speed
-            direction = "➡️"
-        
-        if abs(angle_diff) < 0.2:
-            twist.angular.z *= 0.5
-        
-        self.cmd_vel_pub.publish(twist)
-        
-        self.get_logger().info(
-            f'{direction} {math.degrees(angle_diff):+.1f}°',
-            throttle_duration_sec=0.5
-        )
+        g_angle = self.yaw + angle
+        gx = self.x + self.goal_distance * math.cos(g_angle)
+        gy = self.y + self.goal_distance * math.sin(g_angle)
+        self.send_goal(gx, gy, g_angle)
     
-    def send_nav_goal_to_inf(self, laser_angle):
-        """Send goal toward INF direction"""
-        global_angle = self.current_yaw + laser_angle
-        goal_x = self.current_x + self.goal_distance * math.cos(global_angle)
-        goal_y = self.current_y + self.goal_distance * math.sin(global_angle)
+    #Send goal in nav2
+    def send_goal(self, x, y, yaw):
+        #Dont sent goal if complete
+        if self.done:
+            return
         
-        self.get_logger().info('━'*60)
-        self.get_logger().info('🎯 SENDING GOAL TOWARD INF')
-        self.get_logger().info(f'   Goal: ({goal_x:.2f}, {goal_y:.2f})')
-        self.get_logger().info('━'*60)
+        self.last_goal = (x, y, yaw)
+        self.navigating = True
+        self.nav_start = self.get_clock().now()
         
-        self.send_nav_goal(goal_x, goal_y, global_angle)
-    
-    def send_nav_goal(self, goal_x, goal_y, goal_yaw):
-        """Send navigation goal"""
+        goal = NavigateToPose.Goal()
+        goal.pose.header.frame_id = 'map'
+        goal.pose.header.stamp = self.nav_start.to_msg()
+        goal.pose.pose.position.x, goal.pose.pose.position.y = x, y
+        goal.pose.pose.orientation.z = math.sin(yaw/2)
+        goal.pose.pose.orientation.w = math.cos(yaw/2)
         
-        self.is_navigating = True
+        self.goal_pub.publish(goal.pose)
         
-        # Create action goal message
-        goal_msg = NavigateToPose.Goal()
-        goal_msg.pose.header.frame_id = 'map'
-        goal_msg.pose.header.stamp = self.get_clock().now().to_msg()
-        
-        goal_msg.pose.pose.position.x = goal_x
-        goal_msg.pose.pose.position.y = goal_y
-        goal_msg.pose.pose.position.z = 0.0
-        
-        goal_msg.pose.pose.orientation.x = 0.0
-        goal_msg.pose.pose.orientation.y = 0.0
-        goal_msg.pose.pose.orientation.z = math.sin(goal_yaw / 2.0)
-        goal_msg.pose.pose.orientation.w = math.cos(goal_yaw / 2.0)
-        
-        # Publish to /goal_pose for visualization
-        goal_pose = PoseStamped()
-        goal_pose.header = goal_msg.pose.header
-        goal_pose.pose = goal_msg.pose.pose
-        self.goal_pub.publish(goal_pose)
-        
-        # Wait for action server
         if not self.nav_client.wait_for_server(timeout_sec=5.0):
-            self.get_logger().error('❌ Nav2 action server not available!')
-            self.is_navigating = False
+            self.reset()
             return
         
-        # Send goal
-        self.send_goal_future = self.nav_client.send_goal_async(
-            goal_msg,
-            feedback_callback=self.nav_feedback_callback
-        )
-        self.send_goal_future.add_done_callback(self.nav_goal_response_callback)
+        self.nav_client.send_goal_async(goal).add_done_callback(self.goal_feedback)
     
-    def nav_goal_response_callback(self, future):
-        """Handle goal acceptance"""
-        goal_handle = future.result()
-        
-        if not goal_handle.accepted:
-            self.get_logger().error('❌ GOAL REJECTED!')
-            self.is_navigating = False
+    #Check goal feedback
+    def goal_feedback(self, future):
+        #Stop if complete
+        if self.done:
             return
         
-        self.get_logger().info('✅ GOAL ACCEPTED - Navigating...')
-        
-        # Store goal handle for cancellation
-        self.current_goal_handle = goal_handle
-        
-        # Wait for result
-        self.result_future = goal_handle.get_result_async()
-        self.result_future.add_done_callback(self.nav_result_callback)
+        self.goal_handle = future.result()
+        if not self.goal_handle.accepted:
+            self.fails += 1
+            self.check_recovery()
+        else:
+            self.goal_handle.get_result_async().add_done_callback(self.goal_outcome)
     
-    def nav_result_callback(self, future):
-        """Handle navigation completion"""
-        result = future.result()
-        status = result.status
+    #check goal complete, success/fail
+    def goal_outcome(self, future):
+        #Stop if complete
+        if self.done:
+            return
         
-        self.get_logger().info('━'*60)
+        status = future.result().status
+        
+        if status == GoalStatus.STATUS_CANCELED and self.in_timeout:
+            self.in_timeout = False
+            return
         
         if status == GoalStatus.STATUS_SUCCEEDED:
-            self.get_logger().info('🎉 NAVIGATION SUCCEEDED!')
-            self.get_logger().info(f'   Reached: ({self.current_x:.2f}, {self.current_y:.2f})')
-            
+            self.fails = 0
+            self.reset()
         elif status == GoalStatus.STATUS_ABORTED:
-            self.get_logger().warn('⚠️ NAVIGATION ABORTED')
-            
-        elif status == GoalStatus.STATUS_CANCELED:
-            self.get_logger().warn('⚠️ NAVIGATION CANCELED')
+            self.fails += 1
+            self.check_recovery()
+        elif status == GoalStatus.STATUS_CANCELED and not (self.rotating or self.inf_triggered):
+            self.fails += 1
+            self.check_recovery()
         
-        self.get_logger().info('━'*60)
-        
-        self.is_navigating = False
-        self.current_goal_handle = None
+        self.navigating = False
+        self.nav_start = self.goal_handle = None
     
-    def nav_feedback_callback(self, feedback_msg):
-        """Handle navigation feedback"""
-        feedback = feedback_msg.feedback
-        current_pose = feedback.current_pose.pose
-        
-        self.get_logger().info(
-            f'🚗 Navigating... ({current_pose.position.x:.2f}, {current_pose.position.y:.2f})',
-            throttle_duration_sec=1.0
-        )
+    #Recovery Behaviour
     
-    def stop_robot(self):
-        """Emergency stop"""
+    def check_recovery(self):
+        #Dont recover if complete
+        if self.done:
+            return
+        
+        if self.fails < self.max_fails:
+            self.reset()
+            return
+        
+        if self.last_recovery:
+            elapsed = (self.get_clock().now() - self.last_recovery).nanoseconds/1e9
+            if elapsed < self.recovery_cooldown:
+                self.fails = 0
+                self.reset()
+                return
+        
+        self.recovery()
+    
+    #Execute recovery
+    def recovery(self):
+        #Stop if complete
+        if self.done:
+            return
+        
+        self.last_recovery = self.get_clock().now()
+        self.fails = 0
+        self.in_recovery = True
+        self.stop_movement()
+        time.sleep(1.0)
+        
+        msg = self.lidar_status()
+        if not msg:
+            self.recovery_spin()
+            return
+        
+        #check sensor which side is empty
+        directions = {
+            'forward': self.extract_sensor_data(msg, 350, 10),
+            'backward': self.extract_sensor_data(msg, 170, 190),
+            'left': self.extract_sensor_data(msg, 80, 100),
+            'right': self.extract_sensor_data(msg, 260, 280)
+        }
+        
+        clearances = {k: min(v) if v else 0.0 for k, v in directions.items()}
+        safe = {k: v for k, v in clearances.items() if v >= 0.4}
+        
+        if not safe:
+            self.recovery_spin()
+            return
+        
+        #Choose safest method
+        best = max(safe, key=safe.get)
+        
+        #Recovery movement (Linear_vel, Angular_vel, duration)
+        moves = {
+            'forward': (0.2, 0.0, 1.5),
+            'backward': (-0.1, 0.0, 1.0),
+            'left': (0.15, 0.3, 2.0),
+            'right': (0.15, -0.3, 2.0)
+        }
+        
+        self.control_movement(*moves[best])
+        self.in_recovery = False
+        self.reset()
+        
+        if self.last_goal:
+            self.send_goal(*self.last_goal)
+        else:
+            self.send_goal(*self.initial_goal, 0.0)
+    
+    #Reovery complete then read sensor data
+    def lidar_status(self):
+        msg = None
+        def cb(m):
+            nonlocal msg
+            msg = msg or m
+        
+        sub = self.create_subscription(LaserScan, '/scan', cb, 10)
+        start = self.get_clock().now()
+        
+        while not msg and (self.get_clock().now() - start).nanoseconds/1e9 < 2.0:
+            rclpy.spin_once(self, timeout_sec=0.1)
+        
+        self.destroy_subscription(sub)
+        return msg
+    
+    #Recovery using cmd_vel
+    def control_movement(self, linear, angular, duration):
         twist = Twist()
-        self.cmd_vel_pub.publish(twist)
-
+        twist.linear.x, twist.angular.z = linear, angular
+        
+        for _ in range(int(duration * 10)):
+            # FIXED: Check if done during movement
+            if self.done:
+                self.stop_movement()
+                return
+            self.cmd_vel.publish(twist)
+            time.sleep(0.1)
+        
+        self.stop_movement()
+        time.sleep(0.5)
+    
+    #Recovery rotate in place
+    def recovery_spin(self):
+        if self.done:
+            return
+        
+        self.control_movement(0.0, 0.5, 6.0)
+        self.in_recovery = False
+        self.reset()
+    
+    #Reset flag to start navigation
+    def reset(self):
+        """Clear all navigation state flags"""
+        self.navigating = self.inf_triggered = False
+        self.inf_start = self.nav_start = self.goal_handle = None
 
 def main(args=None):
     rclpy.init(args=args)
-    node = OpportunisticNavigator()
-    
-    try:
+    node = Exploration_Node()
+    try:                        #Run Main Program
         rclpy.spin(node)
-    except KeyboardInterrupt:
-        node.get_logger().info('Shutting down...')
-        node.stop_robot()
-    finally:
+    except KeyboardInterrupt:   #When exit program
+        node.stop_movement()     
+    finally:                    #After exit progam
         node.destroy_node()
         rclpy.shutdown()
 

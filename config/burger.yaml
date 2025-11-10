@@ -43,7 +43,7 @@ bt_navigator:
   ros__parameters:
     use_sim_time: True
     global_frame: map
-    robot_base_frame: base_footprint #Before bas_link
+    robot_base_frame: base_link
     odom_topic: /odom
     bt_loop_duration: 20   #was 10ms
     default_server_timeout: 20
@@ -120,7 +120,7 @@ controller_server:
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
       required_movement_radius: 0.2  #0.5
-      movement_time_allowance: 10.0  #Before 3.0
+      movement_time_allowance: 3.0  #10.0
 
     general_goal_checker:
       stateful: True
@@ -152,15 +152,15 @@ controller_server:
       linear_granularity: 0.03    # 0.05 (shorter horizon and denser sampling)
       angular_granularity: 0.015  # 0.025 (shorter horizon and denser sampling)
       transform_tolerance: 0.2 #0.25
-      xy_goal_tolerance: 0.1 #0.02
+      xy_goal_tolerance: 0.0 #09.25
       trans_stopped_velocity: 0.12  # was 0.25
       short_circuit_trajectory_evaluation: False  #original True
       stateful: True
       critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
-      BaseObstacle.scale: 1.0 #0.02
-      PathAlign.scale: 52.0
+      BaseObstacle.scale: 0.02
+      PathAlign.scale: 32.0
       PathAlign.forward_point_distance: 0.05   # was 0.1
-      GoalAlign.scale: 44.0
+      GoalAlign.scale: 24.0
       GoalAlign.forward_point_distance: 0.1
       PathDist.scale: 28.0     #was 32
       GoalDist.scale: 24.0
@@ -177,17 +177,17 @@ local_costmap:
       robot_base_frame: base_footprint     # <-- align with TB3 base
       transform_tolerance: 0.5
       use_sim_time: True
-      rolling_window: true
-      width: 20  #must be integer
-      height: 20  #must be integer
+      rolling_window: True 
+      width: 6  #must be integer
+      height: 6  #must be integer
       resolution: 0.05
       robot_radius: 0.12  #adjusted
       track_unknown_space: true
       plugins: ["voxel_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 30.0 #updated adjusted 10.
-        inflation_radius: 0.12 #updated adjusted .10
+        cost_scaling_factor: 0.12 #updated adjusted 30.
+        inflation_radius: 0.12 #updated adjusted .15
       voxel_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"
         enabled: True
@@ -209,6 +209,7 @@ local_costmap:
           obstacle_max_range: 2.5
           obstacle_min_range: 0.0
 
+
 global_costmap:
   global_costmap:
     ros__parameters:
@@ -222,7 +223,7 @@ global_costmap:
       robot_radius: 0.11  #added
 
       # Exploration-friendly window that always contains the robot
-      rolling_window: true
+      rolling_window: True
       width: 75  #must be integer
       height: 75  #must be integer
       track_unknown_space: true
@@ -255,10 +256,11 @@ global_costmap:
 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        inflation_radius: 0.18 #change adjusted 0.12
-        cost_scaling_factor: 15.0 #change adjusted 15.0
+        inflation_radius: 0.12 #change adjusted
+        cost_scaling_factor: 15.0 #change adjusted
 
       always_send_full_costmap: True
+
 
 #map_server:
   #ros__parameters:
@@ -299,17 +301,19 @@ behavior_server:
     costmap_topic: local_costmap/costmap_raw
     footprint_topic: local_costmap/published_footprint
     cycle_frequency: 10.0
-    behavior_plugins: ["spin", "backup", "assisted_teleop", "wait"]
+    behavior_plugins: ["spin", "backup", "drive_on_heading", "assisted_teleop", "wait"]
     spin:
       plugin: "nav2_behaviors/Spin"
     backup:
       plugin: "nav2_behaviors/BackUp"
+    drive_on_heading:
+      plugin: "nav2_behaviors/DriveOnHeading"
     wait:
       plugin: "nav2_behaviors/Wait"
     assisted_teleop:
       plugin: "nav2_behaviors/AssistedTeleop"
     global_frame: odom
-    robot_base_frame: base_footprint #base_link
+    robot_base_frame: base_link
     transform_tolerance: 0.1
     use_sim_time: true
     simulate_ahead_time: 2.0
@@ -346,3 +350,4 @@ velocity_smoother:
     odom_duration: 0.1
     deadband_velocity: [0.0, 0.0, 0.0]
     velocity_timeout: 1.0
+
