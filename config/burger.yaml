@@ -133,11 +133,11 @@ controller_server:
       debug_trajectory_details: True
       min_vel_x: 0.0
       min_vel_y: 0.0
-      max_vel_x: 0.22    # Decrease speed was 0.26
+      max_vel_x: 0.25    # Decrease speed was 0.26
       max_vel_y: 0.0
       max_vel_theta: 1.0
       min_speed_xy: 0.0
-      max_speed_xy: 0.22  # Decrease speed was 0.26
+      max_speed_xy: 0.25  # Decrease speed was 0.26
       min_speed_theta: 0.0
       acc_lim_x: 2.5
       acc_lim_y: 0.0
@@ -171,7 +171,7 @@ controller_server:
 local_costmap:
   local_costmap:
     ros__parameters:
-      update_frequency: 10.0 #update from 5.0
+      update_frequency: 15.0 #update from 5.0
       publish_frequency: 5.0 #update from 2.0
       global_frame: odom
       robot_base_frame: base_footprint     # <-- align with TB3 base
@@ -213,7 +213,7 @@ local_costmap:
 global_costmap:
   global_costmap:
     ros__parameters:
-      update_frequency: 5.0 #update from 1.0
+      update_frequency: 8.0 #update from 1.0
       publish_frequency: 2.0 #update from 2.0
       global_frame: map
       robot_base_frame: base_footprint     # <-- match TB3’s TF (safer than base_link)
