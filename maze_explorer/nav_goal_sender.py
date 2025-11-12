@@ -28,7 +28,7 @@ class Exploration_Node(Node):
         
         #Navigation Value
         self.initial_goal = (5.0, 0.0)      #Set Custom goal
-        self.goal_distance = 2.5            #Set goal 2.5m from robot pos
+        self.goal_distance = 3.0            #Set goal 2.5m from robot pos
         self.timeout = 30.0                 #Set timeout for recovery behaviour
         self.inf_time = 2.0                 #Check how long inf val see
         self.exit_time = 5.0                #Check how long the robot is out of maze
