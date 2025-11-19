@@ -1,5 +1,4 @@
 import os
-
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
@@ -14,9 +13,9 @@ TURTLEBOT3_MODEL = os.environ['TURTLEBOT3_MODEL']
 def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time', default='false')
 
-    # Use your own package instead of turtlebot3_navigation2
     maze_explorer_dir = get_package_share_directory('maze_explorer')
     
+    # Nav2 params
     param_file_name = TURTLEBOT3_MODEL + '.yaml'
     param_dir = LaunchConfiguration(
         'params_file',
@@ -24,6 +23,12 @@ def generate_launch_description():
             maze_explorer_dir,
             'config',
             param_file_name))
+
+    # SLAM params - CUSTOM FILE
+    slam_params_file = os.path.join(
+        maze_explorer_dir,
+        'config',
+        'mapper_params_online_async.yaml')
 
     nav2_launch_file_dir = os.path.join(get_package_share_directory('nav2_bringup'), 'launch')
     slam_launch_file_dir = os.path.join(get_package_share_directory('slam_toolbox'), 'launch')
@@ -44,11 +49,13 @@ def generate_launch_description():
             default_value='false',
             description='Use simulation (Gazebo) clock if true'),
 
-        # Launch SLAM Toolbox
+        # Launch SLAM Toolbox with CUSTOM params
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource([slam_launch_file_dir, '/online_async_launch.py']),
             launch_arguments={
-                'use_sim_time': use_sim_time}.items(),
+                'use_sim_time': use_sim_time,
+                'slam_params_file': slam_params_file  # ← ADD THIS LINE
+            }.items(),
         ),
 
         # Launch Nav2 without map

@@ -30,7 +30,7 @@ class Exploration_Node(Node):
         self.initial_goal = (5.0, 0.0)      #Set Custom goal
         self.goal_distance = 3.0            #Set goal 2.5m from robot pos
         self.timeout = 30.0                 #Set timeout for recovery behaviour
-        self.inf_time = 2.0                 #Check how long inf val see
+        self.inf_time = 5.0                 #Check how long inf val see
         self.exit_time = 5.0                #Check how long the robot is out of maze
         self.max_fails = 3                  #Set max number of time before recovery trigger
         self.recovery_cooldown = 10.0       #Each interval of recovery trigger

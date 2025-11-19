@@ -15,8 +15,8 @@ def generate_launch_description():
 
     # Launch configurations
     use_sim_time = LaunchConfiguration('use_sim_time', default='true')
-    x_pose = LaunchConfiguration('x_pose', default='0.0')
-    y_pose = LaunchConfiguration('y_pose', default='0.0')
+    x_pose = LaunchConfiguration('x_pose', default='-0.66')
+    y_pose = LaunchConfiguration('y_pose', default='-1.45')
     z_pose = LaunchConfiguration('z_pose', default='0.0')
     yaw = LaunchConfiguration('yaw', default='0.0')
 
@@ -24,7 +24,7 @@ def generate_launch_description():
     maze_sdf_path = os.path.join(
         maze_explorer_dir,
         'models',
-        'ros2_maze',
+        'ros2_maze_02',
         'model.sdf'
     )
 

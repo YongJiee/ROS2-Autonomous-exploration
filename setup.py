@@ -31,6 +31,8 @@ setup(
             glob('models/Maze02/*')),
         (os.path.join('share', package_name, 'models', 'ros2_maze'),
             glob('models/ros2_maze/*')),
+        (os.path.join('share', package_name, 'models', 'ros2_maze_02'),
+            glob('models/ros2_maze_02/*')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,

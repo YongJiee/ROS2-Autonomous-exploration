@@ -9,7 +9,7 @@ ros2 launch maze_explorer maze_world.launch.py world_name:=tb3_maze.world x_pose
 ros2 launch maze_explorer maze_world.launch.py world_name:=maze_walls_full.world x_pose:=1.5 y_pose:=1.3
 
 # Spawn Sdf
-ros2 launch maze_explorer simulation_sdf.launch.py x_pose:=-0.3 y_pose:=-0.0
+ros2 launch maze_explorer simulation_sdf.launch.py x_pose:=0.25 y_pose:=-1.92
 
 # ============ TERMINAL 2 ============ (new terminal)
 ros2 launch maze_explorer navigation.launch.py use_sim_time:=true
